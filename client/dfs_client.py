@@ -288,7 +288,7 @@ def cmd_get(args):
                 fh.write(data)
                 progress.advance(task)
 
-    console.print(f"[green]'{args.filename}' descargado correctamente → {output_path.resolve()}[/green]")
+    console.print(f"[green]'{args.filename}' descargado correctamente -> {output_path.resolve()}[/green]")
 
 
 # ─── Comandos Paso 15: ls / mkdir / rmdir / rm ────────────────────────────────

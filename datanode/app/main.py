@@ -22,9 +22,12 @@ def get_my_host() -> str:
 async def register_with_namenode():
     """Intentar registro con reintentos hasta que el NameNode responda."""
     url = f"{settings.namenode_url}/datanode/register"
+    # Si DATANODE_HOST está configurado explícitamente (no 0.0.0.0), usar ese valor.
+    # Permite que en local el cliente alcance los DataNodes via localhost:800x.
+    host = get_my_host() if settings.datanode_host == "0.0.0.0" else settings.datanode_host
     payload = {
         "datanode_id": settings.datanode_id,
-        "host": get_my_host(),
+        "host": host,
         "port": settings.datanode_port,
     }
     async with httpx.AsyncClient() as client:

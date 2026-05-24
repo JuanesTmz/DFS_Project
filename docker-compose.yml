@@ -48,6 +48,7 @@ services:
     environment:
       - DATANODE_ID=datanode-1
       - DATANODE_PORT=8001
+      - DATANODE_HOST=localhost
       - NAMENODE_URL=http://namenode:8000
     volumes:
       - dn1-data:/data/blocks
@@ -70,6 +71,7 @@ services:
     environment:
       - DATANODE_ID=datanode-2
       - DATANODE_PORT=8002
+      - DATANODE_HOST=localhost
       - NAMENODE_URL=http://namenode:8000
     volumes:
       - dn2-data:/data/blocks
@@ -92,6 +94,7 @@ services:
     environment:
       - DATANODE_ID=datanode-3
       - DATANODE_PORT=8003
+      - DATANODE_HOST=localhost
       - NAMENODE_URL=http://namenode:8000
     volumes:
       - dn3-data:/data/blocks
