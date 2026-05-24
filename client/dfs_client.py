@@ -24,6 +24,8 @@ from pathlib import Path
 import httpx
 from dotenv import load_dotenv
 from rich.console import Console
+from rich.progress import BarColumn, Progress, TaskProgressColumn, TextColumn, TimeRemainingColumn
+from rich.table import Table
 
 load_dotenv(Path(__file__).parent / ".env")
 
@@ -129,16 +131,164 @@ def cmd_logout(args):
     console.print("[green]Sesión cerrada.[/green]")
 
 
+# ─── Helpers de transferencia de bloques ─────────────────────────────────────
+
+def _upload_block(block_id: str, data: bytes, datanode: dict):
+    url = f"http://{datanode['host']}:{datanode['port']}/blocks/upload/{block_id}"
+    try:
+        r = httpx.post(
+            url,
+            files={"file": (f"{block_id}.bin", data, "application/octet-stream")},
+            timeout=120,
+        )
+        if r.status_code != 200:
+            console.print(f"[red]Error al subir bloque {block_id} a {datanode['datanode_id']}: {r.text}[/red]")
+            sys.exit(1)
+    except httpx.ConnectError:
+        console.print(
+            f"[red]No se puede conectar al DataNode {datanode['datanode_id']} "
+            f"({datanode['host']}:{datanode['port']})[/red]"
+        )
+        sys.exit(1)
+
+
+def _confirm_block(token: str, block_id: str, datanode_id: str, size_bytes: int, is_primary: bool):
+    api_call(
+        "POST", "/files/confirm_block",
+        token=token,
+        json={
+            "block_id": block_id,
+            "datanode_id": datanode_id,
+            "size_bytes": size_bytes,
+            "is_primary": is_primary,
+        },
+    )
+
+
 # ─── Comandos Paso 14: put / get ──────────────────────────────────────────────
 
 def cmd_put(args):
-    # Implementado en Paso 14
-    raise NotImplementedError
+    token = require_token()
+    local_path = Path(args.local_path)
+
+    if not local_path.exists():
+        console.print(f"[red]Archivo no encontrado: {local_path}[/red]")
+        sys.exit(1)
+
+    file_size = local_path.stat().st_size
+    filename = local_path.name
+
+    r = api_call(
+        "POST", "/files/put",
+        token=token,
+        json={"filename": filename, "file_size": file_size, "directory": args.dir},
+    )
+    if r.status_code != 200:
+        console.print(f"[red]Error al registrar archivo: {r.json().get('detail', r.text)}[/red]")
+        sys.exit(1)
+
+    put_resp = r.json()
+    total_blocks = put_resp["total_blocks"]
+    block_size = put_resp["block_size_bytes"]
+    assignments = put_resp["assignments"]
+
+    progress_cols = [
+        TextColumn("[cyan]{task.description}"),
+        BarColumn(),
+        TaskProgressColumn(),
+        TimeRemainingColumn(),
+    ]
+    with open(local_path, "rb") as fh:
+        with Progress(*progress_cols, console=console) as progress:
+            task = progress.add_task(f"Subiendo {filename}", total=total_blocks)
+
+            for assignment in assignments:
+                idx = assignment["block_index"]
+                block_id = assignment["block_id"]
+                primary = assignment["primary_datanode"]
+                replica = assignment["replica_datanode"]
+
+                fh.seek(idx * block_size)
+                chunk = fh.read(block_size)
+
+                _upload_block(block_id, chunk, primary)
+                _confirm_block(token, block_id, primary["datanode_id"], len(chunk), is_primary=True)
+
+                _upload_block(block_id, chunk, replica)
+                _confirm_block(token, block_id, replica["datanode_id"], len(chunk), is_primary=False)
+
+                progress.advance(task)
+
+    table = Table(title=f"Bloques de [bold]{filename}[/bold]")
+    table.add_column("Bloque", style="cyan", justify="right")
+    table.add_column("Primario", style="green")
+    table.add_column("Réplica", style="yellow")
+    for a in assignments:
+        p = a["primary_datanode"]
+        rep = a["replica_datanode"]
+        table.add_row(
+            str(a["block_index"]),
+            f"{p['datanode_id']} ({p['host']}:{p['port']})",
+            f"{rep['datanode_id']} ({rep['host']}:{rep['port']})",
+        )
+    console.print(table)
+    console.print(f"[green]'{filename}' subido en {total_blocks} bloque(s).[/green]")
 
 
 def cmd_get(args):
-    # Implementado en Paso 14
-    raise NotImplementedError
+    token = require_token()
+
+    r = api_call(
+        "GET", f"/files/get/{args.filename}",
+        token=token,
+        params={"directory": args.dir},
+    )
+    if r.status_code == 404:
+        console.print(f"[red]Archivo '{args.filename}' no encontrado en el DFS.[/red]")
+        sys.exit(1)
+    if r.status_code != 200:
+        console.print(f"[red]Error {r.status_code}: {r.json().get('detail', r.text)}[/red]")
+        sys.exit(1)
+
+    get_resp = r.json()
+    blocks = sorted(get_resp["blocks"], key=lambda b: b["block_index"])
+    output_path = Path(args.filename)
+
+    progress_cols = [
+        TextColumn("[cyan]{task.description}"),
+        BarColumn(),
+        TaskProgressColumn(),
+        TimeRemainingColumn(),
+    ]
+    with open(output_path, "wb") as fh:
+        with Progress(*progress_cols, console=console) as progress:
+            task = progress.add_task(f"Descargando {args.filename}", total=len(blocks))
+
+            for block in blocks:
+                block_id = block["block_id"]
+                data = None
+
+                for dn in block["datanodes"]:
+                    try:
+                        url = f"http://{dn['host']}:{dn['port']}/blocks/download/{block_id}"
+                        resp = httpx.get(url, timeout=120)
+                        if resp.status_code == 200:
+                            data = resp.content
+                            break
+                    except httpx.ConnectError:
+                        continue
+
+                if data is None:
+                    console.print(
+                        f"[red]No se pudo recuperar el bloque {block_id} "
+                        f"de ningún DataNode.[/red]"
+                    )
+                    sys.exit(1)
+
+                fh.write(data)
+                progress.advance(task)
+
+    console.print(f"[green]'{args.filename}' descargado correctamente → {output_path.resolve()}[/green]")
 
 
 # ─── Comandos Paso 15: ls / mkdir / rmdir / rm ────────────────────────────────
