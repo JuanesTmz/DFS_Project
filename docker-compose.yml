@@ -1,0 +1,102 @@
+version: "3.9"
+
+# ─── Red interna del clúster DFS ─────────────────────────────────────────────
+networks:
+  dfs-net:
+    driver: bridge
+
+# ─── Volúmenes persistentes para los bloques de cada DataNode ─────────────────
+volumes:
+  dn1-data:
+  dn2-data:
+  dn3-data:
+  nn-data:
+
+# ─── Servicios ────────────────────────────────────────────────────────────────
+services:
+
+  # ── NameNode ─────────────────────────────────────────────────────────────────
+  namenode:
+    build:
+      context: ./namenode
+      dockerfile: Dockerfile
+    container_name: dfs-namenode
+    ports:
+      - "8000:8000"
+    env_file:
+      - ./namenode/.env
+    volumes:
+      - nn-data:/data
+    networks:
+      - dfs-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── DataNode 1 ───────────────────────────────────────────────────────────────
+  datanode1:
+    build:
+      context: ./datanode
+      dockerfile: Dockerfile
+    container_name: dfs-datanode1
+    ports:
+      - "8001:8001"
+    env_file:
+      - ./datanode/.env
+    environment:
+      - DATANODE_ID=datanode-1
+      - DATANODE_PORT=8001
+      - NAMENODE_URL=http://namenode:8000
+    volumes:
+      - dn1-data:/data/blocks
+    networks:
+      - dfs-net
+    depends_on:
+      namenode:
+        condition: service_healthy
+
+  # ── DataNode 2 ───────────────────────────────────────────────────────────────
+  datanode2:
+    build:
+      context: ./datanode
+      dockerfile: Dockerfile
+    container_name: dfs-datanode2
+    ports:
+      - "8002:8002"
+    env_file:
+      - ./datanode/.env
+    environment:
+      - DATANODE_ID=datanode-2
+      - DATANODE_PORT=8002
+      - NAMENODE_URL=http://namenode:8000
+    volumes:
+      - dn2-data:/data/blocks
+    networks:
+      - dfs-net
+    depends_on:
+      namenode:
+        condition: service_healthy
+
+  # ── DataNode 3 ───────────────────────────────────────────────────────────────
+  datanode3:
+    build:
+      context: ./datanode
+      dockerfile: Dockerfile
+    container_name: dfs-datanode3
+    ports:
+      - "8003:8003"
+    env_file:
+      - ./datanode/.env
+    environment:
+      - DATANODE_ID=datanode-3
+      - DATANODE_PORT=8003
+      - NAMENODE_URL=http://namenode:8000
+    volumes:
+      - dn3-data:/data/blocks
+    networks:
+      - dfs-net
+    depends_on:
+      namenode:
+        condition: service_healthy
