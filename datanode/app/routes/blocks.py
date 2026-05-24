@@ -5,12 +5,18 @@ import os
 from pathlib import Path
 
 import aiofiles
+import httpx
 from fastapi import APIRouter, File, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 
 from app.config import settings
 
 router = APIRouter()
+
+
+class ReplicateRequest(BaseModel):
+    target_url: str
 
 
 @router.post("/blocks/upload/{block_id}")
@@ -46,6 +52,32 @@ async def delete_block(block_id: str):
     if path.exists():
         path.unlink()
     return {"status": "deleted"}
+
+
+@router.post("/blocks/replicate/{block_id}")
+async def replicate_block(block_id: str, body: ReplicateRequest):
+    path = Path(settings.storage_path) / f"{block_id}.bin"
+
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Bloque no encontrado localmente")
+
+    async with aiofiles.open(path, "rb") as f:
+        data = await f.read()
+
+    upload_url = f"{body.target_url.rstrip('/')}/blocks/upload/{block_id}"
+    async with httpx.AsyncClient() as client:
+        r = await client.post(
+            upload_url,
+            files={"file": (f"{block_id}.bin", data, "application/octet-stream")},
+            timeout=60,
+        )
+        if r.status_code != 200:
+            raise HTTPException(
+                status_code=502,
+                detail=f"El DataNode destino respondió {r.status_code}: {r.text}",
+            )
+
+    return {"status": "replicated", "target": body.target_url}
 
 
 @router.get("/health")
