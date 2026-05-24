@@ -14,7 +14,9 @@ from app.models import (
     BlockConfirmRequest,
     BlockLocation,
     DataNodeInfo,
+    FileInfo,
     GetResponse,
+    LsResponse,
     PutRequest,
     PutResponse,
 )
@@ -186,6 +188,37 @@ def get_file(
         total_blocks=file_row["total_blocks"],
         blocks=blocks,
     )
+
+
+# ── LS ───────────────────────────────────────────────────────────────────────
+
+@router.get("/ls", response_model=LsResponse)
+def ls(
+    directory: str = "/",
+    current_user=Depends(get_current_user),
+    db: sqlite3.Connection = Depends(get_db),
+):
+    user_id = current_user["id"]
+
+    file_rows = db.execute(
+        "SELECT * FROM files WHERE user_id = ? AND directory = ? ORDER BY filename",
+        (user_id, directory),
+    ).fetchall()
+    files = [FileInfo(**dict(row)) for row in file_rows]
+
+    # Subdirectorios directos: hijos inmediatos del directorio actual
+    prefix = directory.rstrip("/") + "/"
+    dir_rows = db.execute(
+        "SELECT path FROM directories WHERE user_id = ? AND path LIKE ? ORDER BY path",
+        (user_id, prefix + "%"),
+    ).fetchall()
+    subdirectories = [
+        row["path"]
+        for row in dir_rows
+        if "/" not in row["path"][len(prefix):]  # solo hijos directos
+    ]
+
+    return LsResponse(directory=directory, files=files, subdirectories=subdirectories)
 
 
 # ── DELETE ────────────────────────────────────────────────────────────────────
