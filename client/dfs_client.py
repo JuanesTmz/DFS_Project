@@ -293,24 +293,90 @@ def cmd_get(args):
 
 # ─── Comandos Paso 15: ls / mkdir / rmdir / rm ────────────────────────────────
 
+def _fmt_size(size_bytes: int) -> str:
+    for unit in ("B", "KB", "MB", "GB"):
+        if size_bytes < 1024:
+            return f"{size_bytes:.1f} {unit}"
+        size_bytes /= 1024
+    return f"{size_bytes:.1f} TB"
+
+
 def cmd_ls(args):
-    # Implementado en Paso 15
-    raise NotImplementedError
+    token = require_token()
+    r = api_call("GET", "/files/ls", token=token, params={"directory": args.dir})
+    if r.status_code != 200:
+        console.print(f"[red]Error {r.status_code}: {r.json().get('detail', r.text)}[/red]")
+        sys.exit(1)
+
+    data = r.json()
+    console.print(f"\n[bold]Directorio:[/bold] {data['directory']}\n")
+
+    if data["subdirectories"]:
+        for d in data["subdirectories"]:
+            console.print(f"  [blue]{d}/[/blue]")
+        console.print()
+
+    if not data["files"]:
+        console.print("[dim]  (vacío)[/dim]")
+        return
+
+    table = Table(show_header=True, header_style="bold magenta")
+    table.add_column("Nombre", style="cyan")
+    table.add_column("Tamaño", justify="right")
+    table.add_column("Bloques", justify="right")
+    table.add_column("Creado", style="dim")
+    for f in data["files"]:
+        table.add_row(
+            f["filename"],
+            _fmt_size(f["size_bytes"]),
+            str(f["total_blocks"]),
+            f["created_at"],
+        )
+    console.print(table)
 
 
 def cmd_mkdir(args):
-    # Implementado en Paso 15
-    raise NotImplementedError
+    token = require_token()
+    r = api_call("POST", "/dirs/mkdir", token=token, json={"path": args.path})
+    if r.status_code == 200:
+        console.print(f"[green]Directorio '{args.path}' creado.[/green]")
+    elif r.status_code == 409:
+        console.print(f"[red]El directorio '{args.path}' ya existe.[/red]")
+    else:
+        console.print(f"[red]Error {r.status_code}: {r.json().get('detail', r.text)}[/red]")
 
 
 def cmd_rmdir(args):
-    # Implementado en Paso 15
-    raise NotImplementedError
+    token = require_token()
+    r = api_call("DELETE", f"/dirs/rmdir/{args.path}", token=token)
+    if r.status_code == 200:
+        console.print(f"[green]Directorio '{args.path}' eliminado.[/green]")
+    elif r.status_code == 404:
+        console.print(f"[red]El directorio '{args.path}' no existe.[/red]")
+    elif r.status_code == 400:
+        console.print(f"[red]{r.json().get('detail', 'El directorio no está vacío.')}[/red]")
+    else:
+        console.print(f"[red]Error {r.status_code}: {r.json().get('detail', r.text)}[/red]")
 
 
 def cmd_rm(args):
-    # Implementado en Paso 15
-    raise NotImplementedError
+    token = require_token()
+    confirm = input(f"¿Seguro que deseas eliminar '{args.filename}'? [s/N] ").strip().lower()
+    if confirm not in ("s", "si", "sí"):
+        console.print("[dim]Operación cancelada.[/dim]")
+        return
+
+    r = api_call(
+        "DELETE", f"/files/rm/{args.filename}",
+        token=token,
+        params={"directory": args.dir},
+    )
+    if r.status_code == 200:
+        console.print(f"[green]Archivo '{args.filename}' eliminado.[/green]")
+    elif r.status_code == 404:
+        console.print(f"[red]Archivo '{args.filename}' no encontrado.[/red]")
+    else:
+        console.print(f"[red]Error {r.status_code}: {r.json().get('detail', r.text)}[/red]")
 
 
 # ─── Parser ───────────────────────────────────────────────────────────────────
